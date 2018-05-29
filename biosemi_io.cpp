@@ -4,28 +4,9 @@
 #include <exception>
 #include <vector>
 #include <time.h>
+#include "DLL/labview_dll.h"
 
 #include <boost/lexical_cast.hpp>
-
-// DLL location, depending on platform
-#ifdef _WIN32
-	#ifdef _WIN64
-		const char *dllpath = "DLL\\Win64\\Labview_DLL.dll";
-	#else
-		const char *dllpath = "DLL\\Win32\\Labview_DLL.dll";
-	#endif
-#else
-	#ifdef __APPLE__
-		const char *dllpath = "DLL/Mac/liblabview_dll.0.0.1.dylib";
-	#else
-		#ifdef _LP64
-			const char *dllpath = "DLL/Linux64/liblabview_dll.so";
-		#else
-			const char *dllpath = "DLL/Linux32/liblabview_dll.so";
-		#endif
-	#endif
-#endif
-
 
 // maximum waiting time when trying to connect
 const float max_waiting_time = 3.0;
@@ -35,23 +16,9 @@ const int buffer_bytes = 8*1024*1024;
 const int buffer_samples = 60*512;
 
 // 64 zero bytes
-const unsigned char msg_enable[64] = {0};
+static char msg_enable[64] = {0};
 // 0xFF followed by 63 zero bytes
-const unsigned char msg_handshake[64] = {255,0};
-
-// library handling
-#ifdef _WIN32
-#include <windows.h>
-#define LOAD_LIBRARY(lpath) LoadLibraryA(lpath)
-#define LOAD_FUNCTION(lhandle,fname) GetProcAddress((HMODULE)lhandle,fname)
-#define FREE_LIBRARY(lhandle) FreeLibrary((HMODULE)lhandle)
-#else
-#include <dlfcn.h>
-#define LOAD_LIBRARY(lpath) dlopen(lpath,RTLD_NOW | RTLD_LOCAL)
-#define LOAD_FUNCTION(lhandle,fname) dlsym(lhandle,fname)
-#define FREE_LIBRARY(lhandle) dlclose(lhandle)
-#endif
-
+static unsigned char msg_handshake[64] = {255,0};
 
 std::string biosemi_io::get_last_error() {
 #ifdef _WIN32
@@ -71,49 +38,14 @@ std::string biosemi_io::get_last_error() {
 	}
 	
 #else
-	std::string err_message(dlerror());
+	return "?";
 #endif
 }
 
 
 biosemi_io::biosemi_io() {
-    boost::uint32_t start_idx; // index of the first sample that was recorded
-    boost::uint32_t cur_idx;   // index past the current sample
-
-    // === load the library & obtain DLL functions ===
-
-    std::cout << "Loading BioSemi driver dll..." << std::endl;
-    hDLL_ = LOAD_LIBRARY(dllpath);
-    if (!hDLL_)
-    {
-        throw std::runtime_error(biosemi_io::get_last_error());
-    }
-    OPEN_DRIVER_ASYNC = (OPEN_DRIVER_ASYNC_t)LOAD_FUNCTION(hDLL_,"OPEN_DRIVER_ASYNC");
-    if (!OPEN_DRIVER_ASYNC) {
-        FREE_LIBRARY(hDLL_);
-        throw std::runtime_error("Did not find function OPEN_DRIVER_ASYNC() in the BisoSemi driver DLL.");
-    }
-    USB_WRITE = (USB_WRITE_t)LOAD_FUNCTION(hDLL_,"USB_WRITE");
-    if (!USB_WRITE) {
-        FREE_LIBRARY(hDLL_);
-        throw std::runtime_error("Did not find function USB_WRITE() in the BisoSemi driver DLL.");
-    }
-    READ_MULTIPLE_SWEEPS = (READ_MULTIPLE_SWEEPS_t)LOAD_FUNCTION(hDLL_,"READ_MULTIPLE_SWEEPS");
-    if (!READ_MULTIPLE_SWEEPS) {
-        FREE_LIBRARY(hDLL_);
-        throw std::runtime_error("Did not find function READ_MULTIPLE_SWEEPS() in the BisoSemi driver DLL.");
-    }
-    READ_POINTER = (READ_POINTER_t)LOAD_FUNCTION(hDLL_,"READ_POINTER");
-    if (!READ_POINTER) {
-        FREE_LIBRARY(hDLL_);
-        throw std::runtime_error("Did not find function READ_POINTER() in the BisoSemi driver DLL.");
-    }
-    CLOSE_DRIVER_ASYNC = (CLOSE_DRIVER_ASYNC_t)LOAD_FUNCTION(hDLL_,"CLOSE_DRIVER_ASYNC");
-    if (!CLOSE_DRIVER_ASYNC) {
-        FREE_LIBRARY(hDLL_);
-        throw std::runtime_error("Did not find function CLOSE_DRIVER_ASYNC() in the BisoSemi driver DLL.");
-    }
-
+    intptr_t start_idx; // index of the first sample that was recorded
+    intptr_t cur_idx;   // index past the current sample
 
     // === initialize driver ===
 
@@ -121,15 +53,13 @@ biosemi_io::biosemi_io() {
     std::cout << "Connecting to driver..." << std::endl;
     hConn_ = OPEN_DRIVER_ASYNC();
     if (!hConn_) {
-        FREE_LIBRARY(hDLL_);
 		throw std::runtime_error("Could not open connection to BioSemi driver.");
     }
 
     // initialize USB2 interface
     std::cout << "Initializing USB interface..." << std::endl;
-    if (!USB_WRITE(hConn_,&msg_enable[0])) {
+    if (!USB_WRITE(hConn_,msg_enable)) {
         CLOSE_DRIVER_ASYNC(hConn_);
-        FREE_LIBRARY(hDLL_);
         throw std::runtime_error("Could not initialize BioSemi USB2 interface.");
     }
 
@@ -141,7 +71,6 @@ biosemi_io::biosemi_io() {
     ring_buffer_ = new boost::uint32_t[buffer_bytes];
     if (!ring_buffer_) {
         CLOSE_DRIVER_ASYNC(hConn_);
-        FREE_LIBRARY(hDLL_);
         throw std::runtime_error("Could not allocate ring buffer (out of memory).");
     }
     memset(ring_buffer_,0,buffer_bytes);
@@ -151,9 +80,8 @@ biosemi_io::biosemi_io() {
 
     // enable handshake
     std::cout << "Enabling handshake..." << std::endl;
-    if (!USB_WRITE(hConn_,&msg_handshake[0])) {
+    if (!USB_WRITE(hConn_,(char*) msg_handshake)) {
         CLOSE_DRIVER_ASYNC(hConn_);
-        FREE_LIBRARY(hDLL_);
         delete ring_buffer_;
         throw std::runtime_error("Could not enable handshake with BioSemi USB2 interface.");
     }
@@ -166,7 +94,6 @@ biosemi_io::biosemi_io() {
     if (!READ_POINTER(hConn_,&start_idx)) {
         USB_WRITE(hConn_, &msg_enable[0]);
         CLOSE_DRIVER_ASYNC(hConn_);
-        FREE_LIBRARY(hDLL_);
         delete ring_buffer_;
         throw std::runtime_error("Can not obtain ring buffer pointer from BioSemi driver.");
     }
@@ -175,7 +102,6 @@ biosemi_io::biosemi_io() {
     if (start_idx > buffer_bytes) {
         USB_WRITE(hConn_, &msg_enable[0]);
         CLOSE_DRIVER_ASYNC(hConn_);
-        FREE_LIBRARY(hDLL_);
         delete ring_buffer_;
         throw std::runtime_error("Buffer pointer returned by BioSemi driver is not in the valid range.");
     }
@@ -188,14 +114,12 @@ biosemi_io::biosemi_io() {
         if (!READ_POINTER(hConn_, &cur_idx)) {
             USB_WRITE(hConn_, &msg_enable[0]);
             CLOSE_DRIVER_ASYNC(hConn_);
-            FREE_LIBRARY(hDLL_);
             delete ring_buffer_;
             throw std::runtime_error("Ring buffer handshake with BioSemi driver failed unexpectedly.");
         }
         if ( ((double)(clock() - start_time))/CLOCKS_PER_SEC > max_waiting_time) {
             USB_WRITE(hConn_, &msg_enable[0]);
             CLOSE_DRIVER_ASYNC(hConn_);
-            FREE_LIBRARY(hDLL_);
             delete ring_buffer_;
             if (cur_idx - start_idx < 8)
                 throw std::runtime_error("BioSemi driver does not transmit data. Is the box turned on?");
@@ -233,7 +157,6 @@ biosemi_io::biosemi_io() {
     if (speed_mode_ > 9) {
         USB_WRITE(hConn_, &msg_enable[0]);
         CLOSE_DRIVER_ASYNC(hConn_);
-        FREE_LIBRARY(hDLL_);
         delete ring_buffer_;
         if (is_mk2_)
             throw std::runtime_error("BioSemi amplifier speed mode wheel must be between positions 0 and 8 (9 is a reserved value); recommended for typical use is 4.");
@@ -314,12 +237,10 @@ biosemi_io::biosemi_io() {
     std::cout << "Sending the enable message again..." << std::endl;
     if (!USB_WRITE(hConn_, &msg_enable[0])) {
         CLOSE_DRIVER_ASYNC(hConn_);
-        FREE_LIBRARY(hDLL_);
         throw std::runtime_error("Error while disabling the handshake.");
     }
     std::cout << "Closing the driver..." << std::endl;
     if (!CLOSE_DRIVER_ASYNC(hConn_)) {
-        FREE_LIBRARY(hDLL_);
         throw std::runtime_error("Error while disconnecting.");
     }
 
@@ -333,7 +254,6 @@ biosemi_io::biosemi_io() {
     std::cout << "Allocating a new ring buffer..." << std::endl;
     ring_buffer_ = new boost::uint32_t[buffer_samples*nbchan_];
     if (!ring_buffer_) {
-        FREE_LIBRARY(hDLL_);
         throw std::runtime_error("Could not reallocate ring buffer (out of memory?).");
     }
     std::cout << "Zeroing the ring buffer..." << std::endl;
@@ -344,14 +264,12 @@ biosemi_io::biosemi_io() {
     std::cout << "Opening the driver..." << std::endl;
     hConn_ = OPEN_DRIVER_ASYNC();
     if (!hConn_) {
-        FREE_LIBRARY(hDLL_);
         throw std::runtime_error("Could not open connection to BioSemi driver.");
     }
     // reinitialize USB2 interface
     std::cout << "Reinitializing the USB interface..." << std::endl;
     if (!USB_WRITE(hConn_,&msg_enable[0])) {
         CLOSE_DRIVER_ASYNC(hConn_);
-        FREE_LIBRARY(hDLL_);
         throw std::runtime_error("Could not initialize BioSemi USB2 interface.");
     }
     // begin acquisition
@@ -359,9 +277,8 @@ biosemi_io::biosemi_io() {
     READ_MULTIPLE_SWEEPS(hConn_,(char*)ring_buffer_,buffer_samples*4*nbchan_);
     // enable handshake
     std::cout << "Enabling handshake..." << std::endl;
-    if (!USB_WRITE(hConn_,&msg_handshake[0])) {
+    if (!USB_WRITE(hConn_, (char*) msg_handshake)) {
         CLOSE_DRIVER_ASYNC(hConn_);
-        FREE_LIBRARY(hDLL_);
         delete ring_buffer_;
         throw std::runtime_error("Could not reenable handshake with BioSemi USB2 interface.");
     }
@@ -374,7 +291,6 @@ biosemi_io::biosemi_io() {
     if (!READ_POINTER(hConn_,&start_idx)) {
         USB_WRITE(hConn_, &msg_enable[0]);
         CLOSE_DRIVER_ASYNC(hConn_);
-        FREE_LIBRARY(hDLL_);
         delete ring_buffer_;
         throw std::runtime_error("Can not obtain ring buffer pointer from BioSemi driver.");
     }
@@ -386,14 +302,12 @@ biosemi_io::biosemi_io() {
         if (!READ_POINTER(hConn_, &cur_idx)) {
             USB_WRITE(hConn_, &msg_enable[0]);
             CLOSE_DRIVER_ASYNC(hConn_);
-            FREE_LIBRARY(hDLL_);
             delete ring_buffer_;
             throw std::runtime_error("Ring buffer handshake with BioSemi driver failed unexpectedly.");
         }
         if ( ((double)(clock() - start_time))/CLOCKS_PER_SEC > max_waiting_time) {
             USB_WRITE(hConn_, &msg_enable[0]);
             CLOSE_DRIVER_ASYNC(hConn_);
-            FREE_LIBRARY(hDLL_);
             delete ring_buffer_;
             if (cur_idx - start_idx < 8)
                 throw std::runtime_error("BioSemi driver does not transmit data. Is the box turned on?");
@@ -407,7 +321,6 @@ biosemi_io::biosemi_io() {
             if (ring_buffer_[start_idx/4+nbchan_] != 0xFFFFFF00) {
                 USB_WRITE(hConn_, &msg_enable[0]);
                 CLOSE_DRIVER_ASYNC(hConn_);
-                FREE_LIBRARY(hDLL_);
                 delete ring_buffer_;
                 throw std::runtime_error("Sync signal did not show up at the expected position.");
             } else {
@@ -484,17 +397,14 @@ biosemi_io::~biosemi_io() {
     if (!CLOSE_DRIVER_ASYNC(hConn_))
         std::cout << "Closing the BioSemi driver gave an error." << std::endl;
 
-    // close the DLL
-    FREE_LIBRARY(hDLL_);
-
     // free the ring buffer
     delete ring_buffer_;
 }
 
 void biosemi_io::get_chunk(chunk_t &result) {
     // get current buffer offset
-    int cur_idx;
-    if (!READ_POINTER(hConn_, (unsigned*)&cur_idx))
+    intptr_t cur_idx;
+    if (!READ_POINTER(hConn_, &cur_idx))
         throw std::runtime_error("Reading the updated buffer pointer gave an error.");
     cur_idx = cur_idx/4;
 

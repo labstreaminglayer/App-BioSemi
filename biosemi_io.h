@@ -45,13 +45,6 @@ public:
     int nbaib() const { return nbaib_; }
 
 private:
-    // function handle types for the library IO
-    typedef void* (BIOSEMI_LINKAGE *OPEN_DRIVER_ASYNC_t)(void);
-    typedef int (BIOSEMI_LINKAGE *USB_WRITE_t)(void*, const unsigned char*);
-    typedef int (BIOSEMI_LINKAGE *READ_MULTIPLE_SWEEPS_t)(void*,char*,int);
-    typedef int (BIOSEMI_LINKAGE *READ_POINTER_t)(void*,unsigned*);
-    typedef int (BIOSEMI_LINKAGE *CLOSE_DRIVER_ASYNC_t)(void*);
-
 	static std::string get_last_error();
 
     // amplifier parameters
@@ -80,12 +73,6 @@ private:
     void *hDLL_;
     // connection handle
     void *hConn_;
-    // function pointers
-    OPEN_DRIVER_ASYNC_t OPEN_DRIVER_ASYNC;
-    USB_WRITE_t USB_WRITE;
-    READ_MULTIPLE_SWEEPS_t READ_MULTIPLE_SWEEPS;
-    READ_POINTER_t READ_POINTER;
-    CLOSE_DRIVER_ASYNC_t CLOSE_DRIVER_ASYNC;
 };
 
 #endif // BIOSEMI_IO_H
