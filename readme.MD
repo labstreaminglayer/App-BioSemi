@@ -2,6 +2,12 @@
 
 The program should support the entire ActiveTwo series of amplifiers by BioSemi (http://www.biosemi.com/), including Mark 1 and Mark 2 amplifiers, analog input boxes, and so on. Daisy-chained multi-amp setups should work but have not yet been tested. While the application has a variety of customizable settings using it is as simple as clicking one button to get data collected.
 
+# Downloading
+
+Please first check the Releases page to see if there is a release there for you. If not then you may find and old version on the sccn ftp: ftp://sccn.ucsd.edu/pub/software/LSL/Apps/
+
+You may also build the application from source though the project hasn't been updated in a while and will require some manual configuration.
+
 # Usage
 
   * It is essential that you have the correct drivers installed. There is an old set of drivers from 2006 which are known to **not work** with this program. You find more recent drivers that have been tested in the drivers-win32\_64.zip file.
