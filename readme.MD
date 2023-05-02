@@ -4,7 +4,7 @@ The program should support the entire ActiveTwo series of amplifiers by BioSemi 
 
 # Downloading
 
-Please first check the Releases page to see if there is a release there for you. If not then you may find and old version on the sccn ftp: ftp://sccn.ucsd.edu/pub/software/LSL/Apps/
+Please first check the Releases page to see if there is a release there for you. If not then you may find and old version on the sccn ( https://sccn.ucsd.edu/download/software/LSL/Apps/)
 
 You may also build the application from source though the project hasn't been updated in a while and will require some manual configuration.
 
